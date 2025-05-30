@@ -18,7 +18,7 @@ kops create cluster --name perala.k8s.local --zones ap-south-1a --master-count=1
 kops update cluster --name perala.k8s.local --yes --admin
 
 *************************************************************************************************88
-#.bashrc
+# .bashrc
 
 export PATH=$PATH:/usr/local/bin/
 
