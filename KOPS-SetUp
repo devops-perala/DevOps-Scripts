@@ -1,6 +1,9 @@
 # Add Admin IAM ROLE to EC2
-#vim .bashrc
+#vi .bashrc
 #export PATH=$PATH:/usr/local/bin/
+alias rm='rm-i'
+alias cp='cp-i'
+alias mv='mv-i'
 #source .bashrc
 
 **********************************************************************
@@ -16,6 +19,8 @@ aws s3api put-bucket-versioning --bucket perala-kops-testbkt1234.k8s.local --reg
 export KOPS_STATE_STORE=s3://perala-kops-testbkt1234.k8s.local
 kops create cluster --name perala.k8s.local --zones ap-south-1a --master-count=1 --master-size t2.medium --node-count=2 --node-size t2.micro
 kops update cluster --name perala.k8s.local --yes --admin
+
+kops validate cluster --wait 10m
 
 *************************************************************************************************88
 # .bashrc
