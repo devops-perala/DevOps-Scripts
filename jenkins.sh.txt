@@ -16,3 +16,30 @@ systemctl status jenkins.service
 
 #STEP-5: Auto-Start Jenkins
 chkconfig jenkins on
+
+*****************************************************************************************************************************
+#!/bin/bash
+
+# Exit on any error
+set -e
+
+echo "=== Step 1: Installing Git and Maven ==="
+sudo yum install -y git maven
+
+echo "=== Step 2: Adding Jenkins Repo and GPG Key ==="
+sudo wget -O /etc/yum.repos.d/jenkins.repo https://pkg.jenkins.io/redhat-stable/jenkins.repo
+sudo rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
+
+echo "=== Step 3: Installing Java 17 and Jenkins ==="
+sudo yum install -y java-17-amazon-corretto
+sudo yum install -y jenkins
+
+echo "=== Step 4: Enabling and Starting Jenkins ==="
+sudo systemctl enable jenkins
+sudo systemctl start jenkins
+
+echo "=== Step 5: Checking Jenkins Status ==="
+sudo systemctl status jenkins --no-pager
+
+echo "=== Jenkins Installation Complete! ==="
+echo "Access Jenkins via: http://<your-server-ip>:8080"
