@@ -51,3 +51,54 @@ fi
 CREATE ROLE And iam -----role---create--role---ec2--adminstratoracess----- name it as k8s
 ****************************************************************
 add-----ec2---actions----security-iam-k8s-admin
+
+
+***********************************************************************88
+#!/bin/bash
+
+set -e  # Exit on any error
+set -o pipefail
+
+echo "=== Step 1: Installing kubectl ==="
+curl -LO "https://dl.k8s.io/release/$(curl -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/
+
+echo "=== Step 2: Installing kOps ==="
+KOPS_VERSION="v1.27.0"  # Change to latest stable if needed
+wget "https://github.com/kubernetes/kops/releases/download/${KOPS_VERSION}/kops-linux-amd64"
+chmod +x kops-linux-amd64
+sudo mv kops-linux-amd64 /usr/local/bin/kops
+
+echo "=== Step 3: Creating S3 Bucket for kOps State Store ==="
+BUCKET_NAME="jai-kops-testbkt1234.k8s.local"
+REGION="ap-south-1"
+aws s3api create-bucket \
+  --bucket "$BUCKET_NAME" \
+  --region "$REGION" \
+  --create-bucket-configuration LocationConstraint="$REGION"
+
+aws s3api put-bucket-versioning \
+  --bucket "$BUCKET_NAME" \
+  --region "$REGION" \
+  --versioning-configuration Status=Enabled
+
+export KOPS_STATE_STORE="s3://$BUCKET_NAME"
+
+echo "=== Step 4: Creating Kubernetes Cluster ==="
+CLUSTER_NAME="jai.k8s.local"
+kops create cluster \
+  --name "$CLUSTER_NAME" \
+  --zones "${REGION}a" \
+  --master-count=1 \
+  --master-size=t2.medium \
+  --node-count=2 \
+  --node-size=t2.micro \
+  --yes \
+  --admin
+
+echo "=== Step 5: Validating Cluster ==="
+kops validate cluster --name "$CLUSTER_NAME" --wait 10m
+
+echo "=== kOps Cluster Creation Complete! ==="
+
