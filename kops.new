@@ -2,41 +2,46 @@
 set -euo pipefail
 
 # =============================================
-# Working kOps Cluster Setup (v1.28+ compatible)
+# Universal kOps Cluster Setup Script
+# Works on Amazon Linux 2 & 2023
 # =============================================
-echo "🚀 Starting Reliable kOps Cluster Setup"
+echo "🚀 Starting Universal kOps Cluster Setup"
 
 # 1. Configuration - MUST CUSTOMIZE!
-export CLUSTER_NAME="perala.k8s.local"
+export CLUSTER_NAME="mycluster.k8s.local"
 export KOPS_STATE_STORE="s3://your-unique-kops-state-bucket"
 export AWS_REGION="us-east-1"
 export ZONES="us-east-1a,us-east-1b"
 export NODE_SIZE="t3.medium"
-export CONTROL_PLANE_SIZE="t3.medium"  # Modern replacement for master-size
+export CONTROL_PLANE_SIZE="t3.medium"
 export NODE_COUNT=2
-export CONTROL_PLANE_COUNT=1           # Modern replacement for master-count
-export K8S_VERSION="1.28.5"            # Must use exact version
+export CONTROL_PLANE_COUNT=1
+export K8S_VERSION="1.28.5"  # Must use exact version
 
-# 2. Fix Package Conflicts
-echo "🔧 Resolving Amazon Linux 2023 Package Conflicts..."
-sudo yum remove -y curl-minimal --skip-broken || true
-sudo yum install -y curl --allowerasing || {
-    sudo rpm -e --nodeps curl-minimal 2>/dev/null || true
-    sudo yum install -y curl --skip-broken
-}
+# 2. System Preparation
+echo "🔧 Preparing System Environment..."
+
+# Determine package manager
+if command -v dnf &>/dev/null; then
+    PKG_MGR="dnf"
+    INSTALL_OPTS="--allowerasing"
+else
+    PKG_MGR="yum"
+    INSTALL_OPTS="--skip-broken"
+fi
 
 # 3. Install Dependencies
 echo "📦 Installing System Dependencies..."
-sudo yum update -y --skip-broken
-sudo yum install -y \
+sudo $PKG_MGR update -y $INSTALL_OPTS
+sudo $PKG_MGR install -y \
     unzip \
     jq \
     git \
     bind-utils \
     conntrack \
-    iproute-tc \
-    --allowerasing \
-    --skip-broken
+    iproute \
+    curl \
+    $INSTALL_OPTS
 
 # 4. Install AWS CLI
 echo "📦 Installing AWS CLI..."
@@ -52,7 +57,7 @@ curl -LO "https://dl.k8s.io/release/v${K8S_VERSION}/bin/linux/amd64/kubectl"
 sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 rm kubectl
 
-# 6. Install kOps (Latest)
+# 6. Install kOps
 echo "📦 Installing kOps..."
 KOPS_VERSION=$(curl -s https://api.github.com/repos/kubernetes/kops/releases/latest | grep tag_name | cut -d '"' -f 4)
 curl -Lo kops "https://github.com/kubernetes/kops/releases/download/${KOPS_VERSION}/kops-linux-amd64"
@@ -62,7 +67,7 @@ sudo mv kops /usr/local/bin/
 # 7. Configure S3 State Store
 echo "🪣 Configuring S3 State Store..."
 BUCKET_NAME="${KOPS_STATE_STORE#s3://}"
-if ! aws s3 ls "$KOPS_STATE_STORE" &> /dev/null; then
+if ! aws s3 ls "$KOPS_STATE_STORE" &>/dev/null; then
     aws s3 mb "$KOPS_STATE_STORE" --region "$AWS_REGION"
     aws s3api put-bucket-versioning --bucket "$BUCKET_NAME" --versioning-configuration Status=Enabled
     aws s3api put-bucket-encryption --bucket "$BUCKET_NAME" \
@@ -76,8 +81,8 @@ mkdir -p ~/.ssh
 chmod 600 ~/.ssh/id_rsa
 chmod 644 ~/.ssh/id_rsa.pub
 
-# 9. Create Cluster with Modern Syntax
-echo "🛠 Creating Cluster..."
+# 9. Create Cluster
+echo "🛠 Creating Kubernetes Cluster..."
 kops create cluster \
     --name "$CLUSTER_NAME" \
     --state "$KOPS_STATE_STORE" \
@@ -89,11 +94,10 @@ kops create cluster \
     --kubernetes-version "$K8S_VERSION" \
     --ssh-public-key ~/.ssh/id_rsa.pub \
     --networking calico \
-    --set "spec.kubelet.anonymousAuth=false" \
     --yes
 
 # 10. Wait for Cluster
-echo "⏳ Waiting for cluster (25-30 minutes)..."
+echo "⏳ Waiting for cluster to be ready (20-30 minutes)..."
 end=$((SECONDS+1800))
 while [ $SECONDS -lt $end ]; do
     if kops validate cluster --state "$KOPS_STATE_STORE" --name "$CLUSTER_NAME" 2>/dev/null | grep -q "is ready"; then
@@ -104,15 +108,15 @@ while [ $SECONDS -lt $end ]; do
     sleep 20
 done
 
-# 11. Final Validation
+# 11. Final Verification
 echo "🔍 Running Final Checks..."
 kops validate cluster --state "$KOPS_STATE_STORE" --name "$CLUSTER_NAME"
 kubectl get nodes -o wide
 kubectl get pods -A
 
-echo -e "\n🎉 Cluster Setup Complete!"
-echo "👉 Access: kubectl get nodes"
-echo "👉 Delete: kops delete cluster --name $CLUSTER_NAME --state $KOPS_STATE_STORE --yes"
+echo -e "\n🎉 Kubernetes cluster setup complete!"
+echo "👉 Access your cluster with: kubectl get nodes"
+echo "👉 To delete: kops delete cluster --name $CLUSTER_NAME --state $KOPS_STATE_STORE --yes"
 
 
 *******************************************************************************************************
