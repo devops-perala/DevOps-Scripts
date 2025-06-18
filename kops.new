@@ -1,0 +1,154 @@
+#!/bin/bash
+set -euo pipefail
+
+# =============================================
+# Working kOps Cluster Setup (v1.28+ compatible)
+# =============================================
+echo "🚀 Starting Reliable kOps Cluster Setup"
+
+# 1. Configuration - MUST CUSTOMIZE!
+export CLUSTER_NAME="perala.k8s.local"
+export KOPS_STATE_STORE="s3://your-unique-kops-state-bucket"
+export AWS_REGION="us-east-1"
+export ZONES="us-east-1a,us-east-1b"
+export NODE_SIZE="t3.medium"
+export CONTROL_PLANE_SIZE="t3.medium"  # Modern replacement for master-size
+export NODE_COUNT=2
+export CONTROL_PLANE_COUNT=1           # Modern replacement for master-count
+export K8S_VERSION="1.28.5"            # Must use exact version
+
+# 2. Fix Package Conflicts
+echo "🔧 Resolving Amazon Linux 2023 Package Conflicts..."
+sudo yum remove -y curl-minimal --skip-broken || true
+sudo yum install -y curl --allowerasing || {
+    sudo rpm -e --nodeps curl-minimal 2>/dev/null || true
+    sudo yum install -y curl --skip-broken
+}
+
+# 3. Install Dependencies
+echo "📦 Installing System Dependencies..."
+sudo yum update -y --skip-broken
+sudo yum install -y \
+    unzip \
+    jq \
+    git \
+    bind-utils \
+    conntrack \
+    iproute-tc \
+    --allowerasing \
+    --skip-broken
+
+# 4. Install AWS CLI
+echo "📦 Installing AWS CLI..."
+TEMP_DIR=$(mktemp -d)
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "$TEMP_DIR/awscliv2.zip"
+unzip -q "$TEMP_DIR/awscliv2.zip" -d "$TEMP_DIR"
+sudo "$TEMP_DIR/aws/install" --update
+rm -rf "$TEMP_DIR"
+
+# 5. Install kubectl
+echo "📦 Installing kubectl..."
+curl -LO "https://dl.k8s.io/release/v${K8S_VERSION}/bin/linux/amd64/kubectl"
+sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+rm kubectl
+
+# 6. Install kOps (Latest)
+echo "📦 Installing kOps..."
+KOPS_VERSION=$(curl -s https://api.github.com/repos/kubernetes/kops/releases/latest | grep tag_name | cut -d '"' -f 4)
+curl -Lo kops "https://github.com/kubernetes/kops/releases/download/${KOPS_VERSION}/kops-linux-amd64"
+chmod +x kops
+sudo mv kops /usr/local/bin/
+
+# 7. Configure S3 State Store
+echo "🪣 Configuring S3 State Store..."
+BUCKET_NAME="${KOPS_STATE_STORE#s3://}"
+if ! aws s3 ls "$KOPS_STATE_STORE" &> /dev/null; then
+    aws s3 mb "$KOPS_STATE_STORE" --region "$AWS_REGION"
+    aws s3api put-bucket-versioning --bucket "$BUCKET_NAME" --versioning-configuration Status=Enabled
+    aws s3api put-bucket-encryption --bucket "$BUCKET_NAME" \
+        --server-side-encryption-configuration '{"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]}'
+fi
+
+# 8. Create SSH Key
+echo "🔑 Creating SSH Key..."
+mkdir -p ~/.ssh
+[ ! -f ~/.ssh/id_rsa ] && ssh-keygen -t rsa -b 4096 -N "" -f ~/.ssh/id_rsa
+chmod 600 ~/.ssh/id_rsa
+chmod 644 ~/.ssh/id_rsa.pub
+
+# 9. Create Cluster with Modern Syntax
+echo "🛠 Creating Cluster..."
+kops create cluster \
+    --name "$CLUSTER_NAME" \
+    --state "$KOPS_STATE_STORE" \
+    --zones "$ZONES" \
+    --node-size "$NODE_SIZE" \
+    --control-plane-size "$CONTROL_PLANE_SIZE" \
+    --node-count "$NODE_COUNT" \
+    --control-plane-count "$CONTROL_PLANE_COUNT" \
+    --kubernetes-version "$K8S_VERSION" \
+    --ssh-public-key ~/.ssh/id_rsa.pub \
+    --networking calico \
+    --set "spec.kubelet.anonymousAuth=false" \
+    --yes
+
+# 10. Wait for Cluster
+echo "⏳ Waiting for cluster (25-30 minutes)..."
+end=$((SECONDS+1800))
+while [ $SECONDS -lt $end ]; do
+    if kops validate cluster --state "$KOPS_STATE_STORE" --name "$CLUSTER_NAME" 2>/dev/null | grep -q "is ready"; then
+        echo -e "\n✅ Cluster ready after $((SECONDS/60)) minutes"
+        break
+    fi
+    echo -n "."
+    sleep 20
+done
+
+# 11. Final Validation
+echo "🔍 Running Final Checks..."
+kops validate cluster --state "$KOPS_STATE_STORE" --name "$CLUSTER_NAME"
+kubectl get nodes -o wide
+kubectl get pods -A
+
+echo -e "\n🎉 Cluster Setup Complete!"
+echo "👉 Access: kubectl get nodes"
+echo "👉 Delete: kops delete cluster --name $CLUSTER_NAME --state $KOPS_STATE_STORE --yes"
+
+
+*******************************************************************************************************
+kops delete cluster --name perala.k8s.local --state s3://your-unique-kops-state-bucket --yes
+***************************************************************************************************88
+#!/bin/bash
+set -euo pipefail
+
+# Configuration (must match your cluster settings)
+export CLUSTER_NAME="perala.k8s.local"
+export KOPS_STATE_STORE="s3://your-unique-kops-state-bucket"
+
+echo "🗑 Starting cluster deletion..."
+
+# 1. Delete cluster resources
+kops delete cluster \
+  --name $CLUSTER_NAME \
+  --state $KOPS_STATE_STORE \
+  --yes
+
+# 2. Wait for deletion to complete
+echo "⏳ Waiting for resources to be deleted (5-10 minutes)..."
+sleep 300
+
+# 3. Verify deletion
+kops validate cluster \
+  --name $CLUSTER_NAME \
+  --state $KOPS_STATE_STORE || \
+  echo "✅ Cluster resources deleted"
+
+# 4. Delete S3 bucket (uncomment if you want to remove it)
+# aws s3 rb $KOPS_STATE_STORE --force && \
+# echo "✅ S3 bucket deleted"
+
+# 5. Clean local files
+rm -rf ~/.kube/config
+echo "✅ Local configuration cleaned"
+
+echo "🎉 Cluster deletion complete!"
