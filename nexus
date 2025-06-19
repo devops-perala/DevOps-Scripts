@@ -1,36 +1,47 @@
 #!/bin/bash
 set -e
 
-NEXUS_VERSION=3.81.1-01""
+# 🚨 Ensure system has at least 2GB RAM
+MEM=$(free -m | awk '/^Mem:/{print $2}')
+if [ "$MEM" -lt 2048 ]; then
+  echo "⚠️ WARNING: Nexus requires at least 2GB RAM. Current: ${MEM}MB"
+fi
+
+# ✅ Use a known working version with Java 11
+NEXUS_VERSION="3.68.1-02"
 DOWNLOAD_URL="https://download.sonatype.com/nexus/3/nexus-${NEXUS_VERSION}-unix.tar.gz"
+
+echo "📦 Nexus Version: ${NEXUS_VERSION}"
+echo "📥 Download URL: ${DOWNLOAD_URL}"
 
 echo "1️⃣ Updating system packages..."
 sudo apt-get update -y
 
-echo "2️⃣ Installing OpenJDK 17..."
-sudo apt-get install -y openjdk-17-jdk openjdk-17-jre
+echo "2️⃣ Installing OpenJDK 11..."
+sudo apt-get install -y openjdk-11-jdk openjdk-11-jre
 
 echo "3️⃣ Downloading Nexus ${NEXUS_VERSION}..."
 cd /opt
-sudo wget "${DOWNLOAD_URL}"
+sudo wget -q "${DOWNLOAD_URL}" -O "nexus-${NEXUS_VERSION}.tar.gz"
 
 echo "4️⃣ Extracting Nexus..."
-sudo tar -zxvf "nexus-${NEXUS_VERSION}-unix.tar.gz"
+sudo tar -zxvf "nexus-${NEXUS_VERSION}.tar.gz"
 sudo mv "nexus-${NEXUS_VERSION}" nexus
 
-echo "5️⃣ Creating nexus user..."
-sudo adduser --system --group nexus
+echo "5️⃣ Creating 'nexus' user and group..."
+sudo adduser --system --group nexus || true
 
 echo "6️⃣ Granting sudo‑less permissions to 'nexus'..."
 echo "nexus ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/nexus
 
-echo "7️⃣ Adjusting ownership..."
+echo "7️⃣ Adjusting ownership and permissions..."
 sudo chown -R nexus:nexus /opt/nexus
-sudo mkdir -p /opt/sonatype-work
+sudo mkdir -p /opt/sonatype-work/nexus3/{log,tmp}
 sudo chown -R nexus:nexus /opt/sonatype-work
 
-echo "8️⃣ Configuring service user..."
+echo "8️⃣ Configuring run_as_user..."
 echo 'run_as_user="nexus"' | sudo tee /opt/nexus/bin/nexus.rc
+sudo chmod +x /opt/nexus/bin/nexus
 
 echo "9️⃣ Setting JVM options..."
 sudo tee /opt/nexus/bin/nexus.vmoptions > /dev/null <<EOF
@@ -49,7 +60,7 @@ sudo tee /opt/nexus/bin/nexus.vmoptions > /dev/null <<EOF
 -Djava.io.tmpdir=./sonatype-work/nexus3/tmp
 EOF
 
-echo "🔟 Creating systemd service..."
+echo "🔟 Creating Nexus systemd service..."
 sudo tee /etc/systemd/system/nexus.service > /dev/null <<EOF
 [Unit]
 Description=Nexus Repository Service
@@ -67,13 +78,20 @@ Restart=on-abort
 WantedBy=multi-user.target
 EOF
 
-echo "🔁 Reloading systemd and starting Nexus..."
+echo "🔁 Reloading systemd and enabling service..."
 sudo systemctl daemon-reload
 sudo systemctl enable nexus
-sudo systemctl start nexus
 
-echo "🔓 Allowing port 8081 through firewall..."
+echo "✅ Manually testing Nexus startup..."
+sudo -u nexus /opt/nexus/bin/nexus start || {
+  echo "❌ Manual start failed. Check logs: /opt/sonatype-work/nexus3/log/nexus.log"
+  exit 1
+}
+
+echo "✅ Nexus started successfully."
+
+echo "🔓 Allowing firewall access on port 8081..."
 sudo ufw allow 8081/tcp || true
 
-echo "✅ Nexus setup is complete!"
+echo "🎉 Nexus installation complete!"
 echo "🔗 Access it at: http://$(hostname -I | awk '{print $1}'):8081"
