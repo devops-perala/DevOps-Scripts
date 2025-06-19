@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-NEXUS_VERSION="3.81.0-08"
+NEXUS_VERSION=3.81.1-01""
 DOWNLOAD_URL="https://download.sonatype.com/nexus/3/nexus-${NEXUS_VERSION}-unix.tar.gz"
 
 echo "1️⃣ Updating system packages..."
